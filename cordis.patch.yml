@@ -1,0 +1,4 @@
+- insert:
+    - id: file-tracker
+      name: '@local/dsh-file-tracker'
+      config: {}
