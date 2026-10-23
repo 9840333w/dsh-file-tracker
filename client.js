@@ -41,6 +41,7 @@ window.__ModuleLoader__.load({
       copyFailed: '复制失败',
       deletedHint: '文件已删除，无法打开所在位置',
       revealFailed: '打开位置失败',
+      revealOk: '已在资源管理器中定位',
       fileMissingOpened: '文件已不存在（可能被手动删除或移动），已打开所在文件夹',
       allMissing: '文件及其所在文件夹均已不存在',
       logsMigrated: '已迁移 {n} 个日志文件到新目录',
@@ -82,14 +83,19 @@ window.__ModuleLoader__.load({
       settingsSaveFailed: '保存失败',
       settingsLogs: '日志管理',
       settingsLogsEmpty: '暂无日志文件。',
+      logsScopeFollow: '跟随当前工作区',
+      logsScopeAll: '全部工作区',
+      logsEmptyScope: '当前工作区暂无日志文件。',
       settingsLogsDelete: '删除',
       settingsLogsDeleteConfirm: '确定删除会话「{title}」的日志文件吗？此操作不可恢复。',
       settingsLogsDeleted: '日志已删除',
       sessionUnknown: '未知会话',
       capsuleCount: '{n} 项变动',
+      otherUnseen: '其他会话/工作区还有 {n} 条未读变动',
       closePanel: '收起',
       hostDown: '追踪服务未运行',
       from: '从',
+      to: '到',
     };
 
     const en = {
@@ -121,6 +127,7 @@ window.__ModuleLoader__.load({
       copyFailed: 'Copy failed',
       deletedHint: 'The file was deleted; its location cannot be opened',
       revealFailed: 'Failed to open location',
+      revealOk: 'Located in your file manager',
       fileMissingOpened: 'The file no longer exists (deleted or moved by hand); its folder was opened',
       allMissing: 'Neither the file nor its folder exists anymore',
       logsMigrated: 'Migrated {n} log file(s) to the new directory',
@@ -162,14 +169,19 @@ window.__ModuleLoader__.load({
       settingsSaveFailed: 'Save failed',
       settingsLogs: 'Log files',
       settingsLogsEmpty: 'No log files yet.',
+      logsScopeFollow: 'Current workspace',
+      logsScopeAll: 'All workspaces',
+      logsEmptyScope: 'No log files for the current workspace.',
       settingsLogsDelete: 'Delete',
       settingsLogsDeleteConfirm: 'Delete the log of session "{title}"? This cannot be undone.',
       settingsLogsDeleted: 'Log deleted',
       sessionUnknown: 'Unknown session',
       capsuleCount: '{n} changes',
+      otherUnseen: '{n} unseen change(s) in other sessions/workspaces',
       closePanel: 'Collapse',
       hostDown: 'Tracker host is not running',
       from: 'from',
+      to: 'to',
     };
 
     let T = (key, vars) => {
@@ -247,6 +259,7 @@ window.__ModuleLoader__.load({
         historyEpoch: 0,
         logs: null,
         logsLoading: false,
+        logsScope: 'follow',
         notice: null,
         now: Date.now(),
       },
@@ -282,14 +295,15 @@ window.__ModuleLoader__.load({
       if (changed) persistSeenSeq(s.seen);
     }
 
-    function setNotice(text) {      store.state.notice = { text, at: Date.now() };
+    function setNotice(text, kind) {
+      store.state.notice = { text, kind: kind || 'info', at: Date.now() };
       store.emit();
       setTimeout(() => {
         if (store.state.notice && store.state.notice.text === text) {
           store.state.notice = null;
           store.emit();
         }
-      }, 2200);
+      }, 3500);
     }
 
     /* ================= polling ================= */
@@ -307,35 +321,36 @@ window.__ModuleLoader__.load({
         if (Array.isArray(data.workspaces)) s.workspaces = data.workspaces;
         if (Array.isArray(data.active)) s.active = data.active;
         if (data.reset) {
-          // Host memory window moved past our cursor: refill from zero, but
-          // keep what we already show (seqs are globally unique, dedupe below).
-          s.liveSeq = 0;
+          // Host memory window moved past our cursor: adopt its sequence
+          // position (staying at 0 would loop reset responses forever and
+          // starve the live stream) and rebuild from the backfill it sends.
+          s.live = [];
+          s.liveSeqSet = new Set();
           s.historyEpoch = (s.historyEpoch || 0) + 1;
-        } else {
-          if (Array.isArray(data.records) && data.records.length > 0) {
-            const seen = s.liveSeqSet || (s.liveSeqSet = new Set());
-            for (const rec of data.records) {
-              if (seen.has(rec.seq)) continue;
-              seen.add(rec.seq);
-              s.live.push(rec);
-              // A cached-but-empty history for this session is now stale.
-              const hc = s.history[rec.sessionId];
-              if (hc && hc.loaded && hc.records.length === 0) {
-                hc.stale = true;
-                s.historyEpoch = (s.historyEpoch || 0) + 1;
-              }
-            }
-            if (s.live.length > 10000) {
-              const drop = s.live.splice(0, s.live.length - 10000);
-              for (const d of drop) seen.delete(d.seq);
-            }
-            const last = data.records[data.records.length - 1];
-            if (last && last.kind !== 'excluded' && s.settings?.ui?.showOnEvent !== false) {
-              s.lastEvent = { record: last, at: Date.now() };
+        }
+        if (Array.isArray(data.records) && data.records.length > 0) {
+          const seen = s.liveSeqSet || (s.liveSeqSet = new Set());
+          for (const rec of data.records) {
+            if (seen.has(rec.seq)) continue;
+            seen.add(rec.seq);
+            s.live.push(rec);
+            // A cached-but-empty history for this session is now stale.
+            const hc = s.history[rec.sessionId];
+            if (hc && hc.loaded && hc.records.length === 0) {
+              hc.stale = true;
+              s.historyEpoch = (s.historyEpoch || 0) + 1;
             }
           }
-          if (typeof data.seq === 'number') s.liveSeq = data.seq;
+          if (s.live.length > 10000) {
+            const drop = s.live.splice(0, s.live.length - 10000);
+            for (const d of drop) seen.delete(d.seq);
+          }
+          const last = data.records[data.records.length - 1];
+          if (last && last.kind !== 'excluded' && s.settings?.ui?.showOnEvent !== false) {
+            s.lastEvent = { record: last, at: Date.now() };
+          }
         }
+        if (typeof data.seq === 'number') s.liveSeq = data.seq;
         // While the panel is open everything arriving in view is considered seen.
         if (s.viewing) markScopeSeen(s);
         store.emit();
@@ -401,7 +416,7 @@ window.__ModuleLoader__.load({
       const data = await apiSend('settings', 'PUT', patch);
       if (data.settings) store.set({ settings: data.settings, defaultLogDir: data.defaultLogDir || store.state.defaultLogDir });
       if (typeof data.migrated === 'number' && data.migrated > 0) {
-        setNotice(T('logsMigrated', { n: data.migrated }));
+        setNotice(T('logsMigrated', { n: data.migrated }), 'ok');
         refreshLogs().catch(() => {});
       }
     }
@@ -416,22 +431,23 @@ window.__ModuleLoader__.load({
     }
 
     async function revealRecord(rec) {
-      if (rec.kind === 'delete') { setNotice(T('deletedHint')); return; }
+      if (rec.kind === 'delete') { setNotice(T('deletedHint'), 'err'); return; }
       try {
         const out = await apiSend('reveal', 'POST', { path: rec.path });
         if (!out.ok) {
-          setNotice(out.status === 'all-missing' ? T('allMissing') : T('revealFailed'));
+          setNotice(out.status === 'all-missing' ? T('allMissing') : T('revealFailed'), 'err');
           return;
         }
-        if (out.status === 'file-missing') setNotice(T('fileMissingOpened'));
+        if (out.status === 'file-missing') setNotice(T('fileMissingOpened'), 'info');
+        else setNotice(T('revealOk'), 'ok');
       } catch {
-        setNotice(T('revealFailed'));
+        setNotice(T('revealFailed'), 'err');
       }
     }
 
     function copyText(text) {
-      const done = () => setNotice(T('copied'));
-      const fail = () => setNotice(T('copyFailed'));
+      const done = () => setNotice(T('copied'), 'ok');
+      const fail = () => setNotice(T('copyFailed'), 'err');
       try {
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(text).then(done, () => legacyCopy(text) ? done() : fail());
@@ -470,7 +486,14 @@ window.__ModuleLoader__.load({
       if (!window.confirm(T('settingsLogsDeleteConfirm', { title: title || sessionId }))) return;
       try {
         await apiSend('logs/delete', 'POST', { sessionId });
-        setNotice(T('settingsLogsDeleted'));
+        // Purge client-side copies so the panel stops showing deleted records.
+        const st = store.state;
+        const removed = st.live.filter((r) => r.sessionId === sessionId);
+        if (st.liveSeqSet) for (const r of removed) st.liveSeqSet.delete(r.seq);
+        st.live = st.live.filter((r) => r.sessionId !== sessionId);
+        delete st.history[sessionId];
+        st.historyEpoch = (st.historyEpoch || 0) + 1;
+        setNotice(T('settingsLogsDeleted'), 'ok');
         await refreshLogs();
       } catch { /* ignore */ }
     }
@@ -578,6 +601,7 @@ window.__ModuleLoader__.load({
 .ftk-capsule:hover{box-shadow:0 6px 22px rgba(0,0,0,.26)}
 .ftk-capsule-icon{width:16px;height:16px;flex:none;display:inline-flex;align-items:center;justify-content:center}
 .ftk-capsule-count{font-weight:600;white-space:nowrap}
+.ftk-dot{width:8px;height:8px;border-radius:50%;background:var(--dsw-alias-state-warn-primary,#e8a33d);flex:none;box-shadow:0 0 0 3px color-mix(in srgb, var(--dsw-alias-state-warn-primary,#e8a33d) 25%, transparent)}
 .ftk-capsule-toast{display:flex;align-items:center;gap:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:34vw;color:var(--dsw-alias-label-secondary,#666)}
 .ftk-pulse{animation:ftk-pulse 1.2s ease-out}
 @keyframes ftk-pulse{0%{box-shadow:0 0 0 0 rgba(74,144,217,.5)}100%{box-shadow:0 0 0 12px rgba(74,144,217,0)}}
@@ -619,7 +643,10 @@ window.__ModuleLoader__.load({
 .ftk-menu-item:hover{background:var(--dsw-alias-bg-layer-2,#eee)}
 .ftk-menu-item.disabled{opacity:.4;cursor:default}
 .ftk-menu-item.disabled:hover{background:transparent}
-.ftk-notice{position:fixed;left:50%;transform:translateX(-50%);bottom:28px;background:var(--dsw-alias-bg-overlay,#333);color:var(--dsw-alias-label-primary,#fff);border:1px solid var(--dsw-alias-border-l2,#555);box-shadow:0 6px 24px rgba(0,0,0,.3);padding:6px 16px;border-radius:9px;font-size:12px;pointer-events:none;white-space:nowrap;z-index:2147481003}
+.ftk-notice{position:fixed;left:50%;top:28px;transform:translateX(-50%);background:var(--dsw-alias-bg-overlay,#fff);color:var(--dsw-alias-label-primary,#222);border:1px solid var(--dsw-alias-border-l2,#999);border-left:5px solid var(--dsw-alias-brand-primary,#247bbf);box-shadow:0 10px 34px rgba(0,0,0,.35);padding:12px 26px;border-radius:10px;font-size:14px;font-weight:600;pointer-events:none;white-space:nowrap;z-index:2147481004;animation:ftk-notice-in .18s ease-out}
+.ftk-notice.ok{border-left-color:var(--dsw-alias-state-success-primary,#2a7)}
+.ftk-notice.err{border-left-color:var(--dsw-alias-state-error-primary,#c33)}
+@keyframes ftk-notice-in{from{opacity:0;transform:translate(-50%,-12px)}to{opacity:1;transform:translate(-50%,0)}}
 .ftk-form{flex:1;overflow-y:auto;padding:10px 14px 16px 14px}
 .ftk-section{font-size:11px;font-weight:700;color:var(--dsw-alias-label-secondary,#777);margin:12px 0 6px 0;text-transform:uppercase;letter-spacing:.04em}
 .ftk-field{display:flex;align-items:center;gap:8px;margin:7px 0}
@@ -658,7 +685,7 @@ window.__ModuleLoader__.load({
     function Notice() {
       const s = useStore();
       if (!s.notice) return null;
-      return h('div', { className: 'ftk-notice' }, s.notice.text);
+      return h('div', { className: 'ftk-notice ' + (s.notice.kind || 'info') }, s.notice.text);
     }
 
     /* ================= context menu ================= */
@@ -667,8 +694,14 @@ window.__ModuleLoader__.load({
       const s = useStore();
       useEffect(() => {
         if (!s.menu) return undefined;
-        const close = () => store.set({ menu: null });
-        const onKey = (e) => { if (e.key === 'Escape') close(); };
+        const close = (e) => {
+          // Ignore presses inside the menu itself: unmounting it during
+          // pointerdown would swallow the item's click event entirely.
+          const t = e.target;
+          if (t && typeof t.closest === 'function' && t.closest('[data-ftk-menu]')) return;
+          store.set({ menu: null });
+        };
+        const onKey = (e) => { if (e.key === 'Escape') close(e); };
         window.addEventListener('pointerdown', close, true);
         window.addEventListener('keydown', onKey);
         window.addEventListener('blur', close);
@@ -691,7 +724,11 @@ window.__ModuleLoader__.load({
         h('div', {
           className: 'ftk-menu-item' + (isDel ? ' disabled' : ''),
           title: isDel ? T('deletedHint') : undefined,
-          onClick: () => { if (!isDel) { revealRecord(rec); store.set({ menu: null }); } },
+          onClick: () => {
+            if (isDel) { setNotice(T('deletedHint'), 'err'); store.set({ menu: null }); return; }
+            revealRecord(rec);
+            store.set({ menu: null });
+          },
         }, isExcluded ? T('openFolder') : T('openLocation')),
         h('div', {
           className: 'ftk-menu-item',
@@ -733,7 +770,7 @@ window.__ModuleLoader__.load({
         h('div', { className: 'ftk-rowmain' },
           h('div', { className: 'ftk-name' }, sessTag, parts.name,
             rec.idle ? h('span', { className: 'ftk-sess', title: T('idleHint'), style: { marginLeft: 6 } }, '☾ ' + T('idleTag')) : null),
-          h('div', { className: 'ftk-dir' }, (rec.fromPath ? T('from') + ' ' + splitPath(rec.fromPath).dir + ' · ' : '') + parts.dir),
+          h('div', { className: 'ftk-dir' }, (rec.fromPath ? T('from') + ' ' + splitPath(rec.fromPath).dir + ' ' + T('to') + ' ' : '') + parts.dir),
         ),
         h('span', { className: 'ftk-size' }, fmtSize(rec)),
         h('span', { className: 'ftk-time' }, fmtTime(rec.ts)),
@@ -986,6 +1023,13 @@ window.__ModuleLoader__.load({
             onClick: () => onChange(!checked),
           }));
 
+      const effWs = effectiveWsId(s);
+      const effWsEntry = effWs ? s.workspaces.find((w) => w.id === effWs) : null;
+      const scopedLogs = (s.logs || []).filter((l) =>
+        s.logsScope === 'all' || !effWsEntry
+          ? true
+          : (l.wsId ? l.wsId === effWs : (l.wsName === effWsEntry.name || l.wsName === effWsEntry.slug)));
+
       return h('div', { className: 'ftk-form' },
         switchRow(T('settingsEnable'), T('settingsEnableHint'), draft.enabled, (v) => {
           setField('enabled', v);
@@ -1059,17 +1103,31 @@ window.__ModuleLoader__.load({
             className: 'ftk-btn',
             onClick: () => {
               apiSend('open-log-dir', 'POST', {})
-                .then((out) => setNotice(out && out.ok ? T('logDirOpened') : T('revealFailed')))
-                .catch(() => setNotice(T('revealFailed')));
+                .then((out) => setNotice(out && out.ok ? T('logDirOpened') : T('revealFailed'), out && out.ok ? 'ok' : 'err'))
+                .catch(() => setNotice(T('revealFailed'), 'err'));
             },
           }, T('settingsOpenLogDir'))),
 
-        h('div', { className: 'ftk-section' }, T('settingsLogs')),
+        h('div', { className: 'ftk-section', style: { display: 'flex', alignItems: 'center', gap: 8 } },
+          h('span', { style: { flex: 1 } },
+            T('settingsLogs') + (s.logsScope !== 'all' && effWsEntry ? ' · ' + effWsEntry.name : '')),
+          h('span', {
+            className: 'ftk-chip' + (s.logsScope !== 'all' ? ' active' : ''),
+            onClick: () => store.set({ logsScope: 'follow' }),
+          }, T('logsScopeFollow')),
+          h('span', {
+            className: 'ftk-chip' + (s.logsScope === 'all' ? ' active' : ''),
+            onClick: () => store.set({ logsScope: 'all' }),
+          }, T('logsScopeAll'))),
         s.logsLoading && !s.logs ? h('div', { className: 'ftk-hint' }, T('loading')) : null,
-        s.logs && s.logs.length === 0 ? h('div', { className: 'ftk-hint' }, T('settingsLogsEmpty')) : null,
-        (s.logs || []).map((log) => h('div', { className: 'ftk-logrow', key: log.file },
+        scopedLogs.length === 0
+          ? h('div', { className: 'ftk-hint' },
+              (s.logs || []).length > 0 ? T('logsEmptyScope') : T('settingsLogsEmpty'))
+          : null,
+        scopedLogs.map((log) => h('div', { className: 'ftk-logrow', key: log.wsName + '/' + log.file },
           h('div', { className: 'meta' },
-            h('div', { className: 'name', title: log.cwd || log.sessionId }, log.title || String(log.sessionId).slice(0, 16) + '…'),
+            h('div', { className: 'name', title: log.cwd || log.sessionId },
+              (s.logsScope === 'all' && log.wsName ? '[' + log.wsName + '] ' : '') + (log.title || String(log.sessionId).slice(0, 16) + '…')),
             h('div', { className: 'sub' }, fmtBytes(log.bytes) + ' · ' + new Date(log.mtime).toLocaleString())),
           h('button', {
             className: 'ftk-btn ftk-danger',
@@ -1145,7 +1203,13 @@ window.__ModuleLoader__.load({
       if (s.host === 'down') return h(Styles, null);
       if (!settings) return h(Styles, null);
 
-      const count = viewRecords(s).reduce((n, r) => n + (r.seq > (s.seen[r.sessionId] ?? 0) ? 1 : 0), 0);
+      const scopeRecords = viewRecords(s);
+      const count = scopeRecords.reduce((n, r) => n + (r.seq > (s.seen[r.sessionId] ?? 0) ? 1 : 0), 0);
+      const scopeSids = new Set(scopeRecords.map((r) => r.sessionId));
+      let otherUnseen = 0;
+      for (const r of s.live) {
+        if (r.seq > (s.seen[r.sessionId] ?? 0) && !scopeSids.has(r.sessionId)) otherUnseen += 1;
+      }
       const toast = s.lastEvent && settings.ui?.showOnEvent !== false && Date.now() - s.lastEvent.at < 2800
         ? s.lastEvent.record : null;
       const pos = dragPos.current ?? settings.ui?.position;
@@ -1202,6 +1266,9 @@ window.__ModuleLoader__.load({
         },
           h('span', { className: 'ftk-capsule-icon' }, capsuleIcon()),
           h('span', { className: 'ftk-capsule-count' }, T('capsuleCount', { n: count })),
+          otherUnseen > 0
+            ? h('span', { className: 'ftk-dot', title: T('otherUnseen', { n: otherUnseen }) })
+            : null,
           toast
             ? h('span', { className: 'ftk-capsule-toast' },
                 h('span', { style: { color: kindMeta.token, fontWeight: 700 } }, kindMeta.glyph),

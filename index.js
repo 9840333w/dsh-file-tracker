@@ -1305,44 +1305,70 @@ export function apply(ctx) {
 
   function revealPath(targetPath) {
     return new Promise((res) => {
-      // No windowsHide: CREATE_NO_WINDOW can suppress GUI launcher windows
-      // on Windows. A spawn failure falls back to the shell open verb.
-      const run = (cmd, args, status, fallback) => {
+      const note = (cmd, err) => {
+        appendFile(join(dataDir, 'reveal-debug.jsonl'),
+          JSON.stringify({ ts: nowMs(), path: targetPath, cmd, err: err ?? null }) + '\n', 'utf8').catch(() => {});
+      };
+      // No windowsHide: CREATE_NO_WINDOW can suppress GUI launcher windows.
+      // attempts: [cmd, args, extraOptions?] — explorer needs its raw command
+      // line verbatim (/select unquoted, path quoted), hence windowsVerbatimArguments.
+      const runChain = (attempts, status, i = 0) => {
+        if (i >= attempts.length) {
+          note('all-failed');
+          res({ ok: false, status: 'spawn-failed' });
+          return;
+        }
+        const [cmd, args, opts] = attempts[i];
         try {
-          const child = spawn(cmd, args, { detached: true, stdio: 'ignore' });
-          child.on('error', () => {
-            if (fallback) fallback();
-            else res({ ok: false, status: 'spawn-failed', error: 'spawn failed' });
+          const child = spawn(cmd, args, { detached: true, stdio: 'ignore', ...(opts ?? {}) });
+          let settled = false;
+          child.on('error', (e) => {
+            note(cmd, errorMessage(e));
+            if (!settled) { settled = true; runChain(attempts, status, i + 1); }
           });
           child.unref();
-          setTimeout(() => res({ ok: true, status }), 300);
+          setTimeout(() => {
+            if (!settled) { settled = true; note(cmd, null); res({ ok: true, status }); }
+          }, 300);
         } catch (e) {
-          if (fallback) { fallback(); return; }
-          res({ ok: false, status: 'spawn-failed', error: errorMessage(e) });
+          note(cmd, errorMessage(e));
+          runChain(attempts, status, i + 1);
         }
       };
       (async () => {
         const st = await statOrNull(targetPath);
         const parent = dirname(targetPath);
+        const status = st.exists ? (st.isDir ? 'dir' : 'file') : 'file-missing';
         if (!st.exists) {
           const pst = await statOrNull(parent);
           if (!pst.exists) { res({ ok: false, status: 'all-missing' }); return; }
         }
+        const VERBATIM = { windowsVerbatimArguments: true };
         if (platform() === 'win32') {
           if (st.exists && !st.isDir) {
-            run('explorer.exe', [`/select,${targetPath}`], 'file', () => run('explorer.exe', [parent], 'file-missing'));
+            runChain([
+              ['explorer.exe', [`/select,"${targetPath}"`], VERBATIM],
+              ['cmd.exe', ['/c', 'start', '""', `"${parent}"`]],
+              ['explorer.exe', [parent]],
+            ], status);
           } else if (st.exists) {
-            run('explorer.exe', [targetPath], 'dir', () => run('cmd.exe', ['/c', 'start', '""', targetPath], 'dir'));
+            runChain([
+              ['explorer.exe', [`"${targetPath}"`], VERBATIM],
+              ['cmd.exe', ['/c', 'start', '""', `"${targetPath}"`]],
+            ], status);
           } else {
-            run('explorer.exe', [parent], 'file-missing', () => run('cmd.exe', ['/c', 'start', '""', parent], 'file-missing'));
+            runChain([
+              ['explorer.exe', [`"${parent}"`], VERBATIM],
+              ['cmd.exe', ['/c', 'start', '""', `"${parent}"`]],
+            ], status);
           }
         } else if (platform() === 'darwin') {
-          if (st.exists) run('open', ['-R', targetPath], st.isDir ? 'dir' : 'file');
-          else run('open', [parent], 'file-missing');
+          if (st.exists) runChain([['open', ['-R', targetPath]]], status);
+          else runChain([['open', [parent]]], status);
         } else if (st.exists) {
-          run('xdg-open', [targetPath], st.isDir ? 'dir' : 'file');
+          runChain([['xdg-open', [targetPath]]], status);
         } else {
-          run('xdg-open', [parent], 'file-missing');
+          runChain([['xdg-open', [parent]]], status);
         }
       })().catch(() => res({ ok: false, status: 'all-missing' }));
     });
@@ -1393,7 +1419,19 @@ export function apply(ctx) {
         const sessionFilter = url.searchParams.get('session') || null;
         const minSeq = mem.length > 0 ? mem[0].seq - 1 : globalSeq;
         if (since < minSeq) {
-          sendJson(res, 200, { reset: true, epoch: HOST_EPOCH, seq: globalSeq, settings, sessions: sessionsView(), workspaces: workspacesView(), defaultLogDir: join(dataDir, 'logs') });
+          // Client cursor fell behind the memory window (host restart with a
+          // restored sequence): send a reset AND backfill the live window so
+          // the page has content immediately and resumes streaming.
+          sendJson(res, 200, {
+            reset: true,
+            epoch: HOST_EPOCH,
+            seq: globalSeq,
+            records: mem.slice(-800),
+            settings,
+            sessions: sessionsView(),
+            workspaces: workspacesView(),
+            defaultLogDir: join(dataDir, 'logs'),
+          });
           return;
         }
         let records = since >= globalSeq ? [] : mem.filter((r) => r.seq > since);
@@ -1434,6 +1472,10 @@ export function apply(ctx) {
           sendJson(res, 400, { error: 'invalid sessionId' }); return;
         }
         await rm(logFileFor(sid), { force: true });
+        // Also purge the in-memory live window so polling stops re-serving it.
+        for (let i = mem.length - 1; i >= 0; i--) {
+          if (mem[i].sessionId === sid) mem.splice(i, 1);
+        }
         const idx = sessionIndex.get(sid);
         if (idx) { sessionIndex.delete(sid); scheduleIndexSave(); }
         sendJson(res, 200, { ok: true });
