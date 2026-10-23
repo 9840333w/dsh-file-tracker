@@ -1,6 +1,6 @@
 # dsh-file-tracker · 文件变动追踪
 
-> 一个面向 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) 的持久化插件（Cordis bundle）：
+> 一个面向 [DeepSeek Harness (DSH)] 的持久化插件：
 > **自动记录 AI agent 对工作区及工作区外文件/文件夹的新建、修改、删除、重命名、移动五类操作**，
 > 以可拖拽悬浮窗实时展示，按工作区持久化 JSONL 日志。全程宿主端事件监听，**不消耗任何 LLM token**。
 >
@@ -62,7 +62,7 @@
 
 把本仓库克隆到本地任意目录，然后对任意 DSH 会话说：
 
-> 用 plugin_manager 的 install_bundle 安装 `<仓库绝对路径>` 这个 bundle。
+> 用 plugin_manager 的 install_bundle 安装 `(https://github.com/1694043523/dsh-file-tracker)` 这个 bundle。
 
 **方式 B：插件管理器**
 
@@ -144,7 +144,3 @@ dsh-file-tracker/
 - 全部 HTTP 路由位于 DSH `connection` 信任围栏之后（Host/Origin 校验 + 登录令牌 Cookie），未认证请求返回 401；
 - 不注册任何模型可见的工具或提示词内容，对 prompt 与 KV cache 零影响；
 - "打开所在位置"等子进程调用不使用 shell，路径经绝对路径与换行/空字节校验。
-
-## 许可
-
-由作者自行选择许可证（建议 MIT）。上传 GitHub 前请自行添加 `LICENSE` 文件并检查截图/日志样例中不含个人路径。
