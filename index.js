@@ -266,8 +266,19 @@ export function apply(ctx) {
     } catch { /* first run: defaults */ }
     try {
       await mkdir(logDir(), { recursive: true });
+      const probe = join(logDir(), '.write-probe');
+      await writeFile(probe, 'ok', 'utf8');
+      await rm(probe, { force: true });
     } catch (e) {
-      log.warn(`[file-tracker] cannot create log dir: ${errorMessage(e)}`);
+      // A configured logDir from another machine / dead disk must never brick
+      // the plugin: fall back to the per-machine default and warn.
+      if (settings.logDir) {
+        log.warn(`[file-tracker] configured logDir unusable (${errorMessage(e)}); falling back to default`);
+        settings.logDir = '';
+        await mkdir(logDir(), { recursive: true }).catch(() => {});
+      } else {
+        log.warn(`[file-tracker] cannot create log dir: ${errorMessage(e)}`);
+      }
     }
     await restoreSeq();
   })();
@@ -1098,6 +1109,7 @@ export function apply(ctx) {
       if (cancelled) return;
       await loadIndexOnce().catch(() => {});
       await migrateFlatLogs().catch(() => {});
+      await reconcileIndex().catch(() => {});
       if (cancelled) return;
       ensureWatchers();
       try {
@@ -1286,6 +1298,42 @@ export function apply(ctx) {
     }
   }
 
+  /**
+   * Reconcile the in-memory index with what is actually on disk: sessions
+   * whose log file was deleted (from the UI or by hand) leave the index, and
+   * workspaces left without sessions and without log files disappear from
+   * the dropdowns. Cheap: one stat per indexed session, one readdir per ws.
+   */
+  async function reconcileIndex() {
+    await loadIndexOnce();
+    let changed = false;
+    for (const [sid, meta] of [...sessionIndex]) {
+      const slug = (meta?.wsId && wsIndex.get(meta.wsId)?.slug) || slugForSession(sid);
+      const file = join(logDir(), slug, `${String(sid).replace(/[^A-Za-z0-9._-]/g, '_')}.jsonl`);
+      const st = await statOrNull(file);
+      if (!st.exists) {
+        // The file may still be in the append queue right after first record.
+        if ((meta?.lastTs ?? 0) > nowMs() - 10000) continue;
+        sessionIndex.delete(sid);
+        sidWs.delete(sid);
+        changed = true;
+      }
+    }
+    for (const [wsId, wmeta] of [...wsIndex]) {
+      if ([...sessionIndex.values()].some((m) => m.wsId === wsId)) continue;
+      let hasFiles = false;
+      try {
+        const files = await readdir(join(logDir(), wmeta.slug));
+        hasFiles = files.some((f) => f.endsWith('.jsonl'));
+      } catch { hasFiles = false; }
+      if (!hasFiles) {
+        wsIndex.delete(wsId);
+        changed = true;
+      }
+    }
+    if (changed) scheduleIndexSave();
+  }
+
   function decodeSid(fileSid) {
     // index.json keys are raw session ids; file names are sanitized. Match loosely.
     for (const key of sessionIndex.keys()) {
@@ -1417,6 +1465,7 @@ export function apply(ctx) {
         }
         const since = Number.parseInt(url.searchParams.get('since') ?? '0', 10) || 0;
         const sessionFilter = url.searchParams.get('session') || null;
+        await reconcileIndex();
         const minSeq = mem.length > 0 ? mem[0].seq - 1 : globalSeq;
         if (since < minSeq) {
           // Client cursor fell behind the memory window (host restart with a
@@ -1460,6 +1509,7 @@ export function apply(ctx) {
         return;
       }
       if (action === 'logs' && req.method === 'GET') {
+        await reconcileIndex();
         sendJson(res, 200, { logs: await listLogs() });
         return;
       }
@@ -1478,6 +1528,25 @@ export function apply(ctx) {
         }
         const idx = sessionIndex.get(sid);
         if (idx) { sessionIndex.delete(sid); scheduleIndexSave(); }
+        // Cascade: when a workspace loses its last session AND its last log
+        // file, drop it from the index (and remove the empty folder) so the
+        // UI dropdowns never show ghost workspaces.
+        const idxWs = idx?.wsId;
+        if (idxWs && ![...sessionIndex.values()].some((m) => m.wsId === idxWs)) {
+          const slug = wsIndex.get(idxWs)?.slug;
+          let hasFiles = false;
+          if (slug) {
+            try {
+              const files = await readdir(join(logDir(), slug));
+              hasFiles = files.some((f) => f.endsWith('.jsonl'));
+            } catch { hasFiles = false; }
+          }
+          if (!hasFiles) {
+            if (slug) await rm(join(logDir(), slug), { recursive: true, force: true }).catch(() => {});
+            wsIndex.delete(idxWs);
+            scheduleIndexSave();
+          }
+        }
         sendJson(res, 200, { ok: true });
         return;
       }

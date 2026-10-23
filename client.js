@@ -93,6 +93,7 @@ window.__ModuleLoader__.load({
       capsuleCount: '{n} 项变动',
       otherUnseen: '其他会话/工作区还有 {n} 条未读变动',
       closePanel: '收起',
+      repoUpdates: '仓库及插件更新',
       hostDown: '追踪服务未运行',
       from: '从',
       to: '到',
@@ -179,6 +180,7 @@ window.__ModuleLoader__.load({
       capsuleCount: '{n} changes',
       otherUnseen: '{n} unseen change(s) in other sessions/workspaces',
       closePanel: 'Collapse',
+      repoUpdates: 'Repository & updates',
       hostDown: 'Tracker host is not running',
       from: 'from',
       to: 'to',
@@ -196,6 +198,7 @@ window.__ModuleLoader__.load({
     /* ================= api ================= */
 
     const API = 'file-tracker/api/';
+    const REPO_URL = 'https://github.com/9840333w/dsh-file-tracker';
 
     async function apiGet(action) {
       const r = await fetch(API + action, { headers: { accept: 'application/json' } });
@@ -320,6 +323,17 @@ window.__ModuleLoader__.load({
         if (Array.isArray(data.sessions)) s.sessions = data.sessions;
         if (Array.isArray(data.workspaces)) s.workspaces = data.workspaces;
         if (Array.isArray(data.active)) s.active = data.active;
+        // Drop selections whose target no longer exists (e.g. all its logs
+        // were deleted) so dropdowns never show ghost workspaces/sessions.
+        if (s.selection.mode === 'workspace'
+          && !s.workspaces.some((w) => w.id === s.selection.wsId)) {
+          s.selection = { mode: 'latest', sessionId: null, wsId: null };
+        }
+        if (s.selection.mode === 'session' && s.selection.sessionId
+          && !s.sessions.some((x) => x.sessionId === s.selection.sessionId)
+          && !s.live.some((r) => r.sessionId === s.selection.sessionId)) {
+          s.selection = { mode: 'latest', sessionId: null, wsId: null };
+        }
         if (data.reset) {
           // Host memory window moved past our cursor: adopt its sequence
           // position (staying at 0 would loop reset responses forever and
@@ -671,6 +685,18 @@ window.__ModuleLoader__.load({
 `;
 
     function Styles() { return h('style', null, CSS); }
+
+    function repoIcon() {
+      return h('svg', { viewBox: '0 0 16 16', width: 14, height: 14, 'aria-hidden': true, style: { display: 'block' } },
+        h('circle', { cx: 4, cy: 3.6, r: 1.7, fill: 'currentColor' }),
+        h('circle', { cx: 4, cy: 12.4, r: 1.7, fill: 'currentColor' }),
+        h('circle', { cx: 12, cy: 5.2, r: 1.7, fill: 'currentColor' }),
+        h('path', {
+          d: 'M4 5.3v5.4M12 6.9c0 2.6-3.4 2.3-6.2 3.6',
+          stroke: 'currentColor', strokeWidth: 1.3, fill: 'none', strokeLinecap: 'round',
+        }),
+      );
+    }
 
     function capsuleIcon() {
       return h('svg', { viewBox: '0 0 64 64', width: 16, height: 16, 'aria-hidden': true },
@@ -1168,6 +1194,12 @@ window.__ModuleLoader__.load({
               className: 'ftk-tab' + (s.tab === 'settings' ? ' active' : ''),
               onClick: () => store.set({ tab: 'settings' }),
             }, T('tabSettings'))),
+          h('button', {
+            className: 'ftk-iconbtn',
+            title: T('repoUpdates'),
+            'aria-label': T('repoUpdates'),
+            onClick: () => { try { window.open(REPO_URL, '_blank', 'noopener'); } catch { /* ignore */ } },
+          }, repoIcon()),
           h('button', { className: 'ftk-iconbtn', title: T('closePanel'), onClick: () => setPanelOpen(false) }, '✕'),
         ),
         s.tab === 'records' ? h(RecordsView, null) : h(SettingsView, { embedded: false }),
