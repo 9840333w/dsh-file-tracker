@@ -1170,17 +1170,36 @@ window.__ModuleLoader__.load({
       const settings = s.settings;
       const scale = settings?.ui?.scale ?? 1;
       const opacity = settings?.ui?.opacity ?? 1;
-      const W = Math.round(420 * scale);
-      const H = Math.round(540 * scale);
+      const BASE_W = 420;
+      const BASE_H = 540;
+      // Never let the scaled panel exceed the viewport height.
+      const effScale = Math.min(scale, (window.innerHeight - 16) / BASE_H);
+      const Wv = BASE_W * effScale;
+      const Hv = BASE_H * effScale;
       const pos = settings?.ui?.position;
-      let style;
+      let left;
+      let top;
       if (pos) {
-        const left = Math.max(8, Math.min(pos.x, window.innerWidth - W - 8));
-        const top = Math.max(8, Math.min(pos.y - H - 10, window.innerHeight - H - 8));
-        style = { left, top: Math.min(top, window.innerHeight - 60), width: W, height: H, opacity };
+        // Anchor ABOVE the capsule when there is room, otherwise BELOW it, so
+        // resizing can never leave the panel covering the capsule.
+        left = Math.max(8, Math.min(pos.x, window.innerWidth - Wv - 8));
+        const capHv = 34 * scale;
+        const above = pos.y - Hv - 10;
+        top = above >= 8 ? above : Math.min(pos.y + capHv + 10, window.innerHeight - Hv - 8);
+        top = Math.max(8, top);
       } else {
-        style = { right: 20, bottom: 140, width: W, height: H, opacity };
+        left = Math.max(8, window.innerWidth - Wv - 20);
+        top = Math.max(8, window.innerHeight - Hv - 140);
       }
+      const style = {
+        left,
+        top,
+        width: BASE_W,
+        height: BASE_H,
+        transform: `scale(${effScale})`,
+        transformOrigin: 'top left',
+        opacity,
+      };
       return h('div', { className: 'ftk-panel', style, 'data-ftk-panel': 'true' },
         h('div', { className: 'ftk-panel-header' },
           h('span', { className: 'ftk-capsule-icon' }, capsuleIcon()),
@@ -1244,32 +1263,40 @@ window.__ModuleLoader__.load({
       }
       const toast = s.lastEvent && settings.ui?.showOnEvent !== false && Date.now() - s.lastEvent.at < 2800
         ? s.lastEvent.record : null;
-      const pos = dragPos.current ?? settings.ui?.position;
-      const posStyle = pos ? { left: pos.x, top: pos.y } : { right: 20, bottom: 84 };
       const scale = settings.ui?.scale ?? 1;
       const opacity = settings.ui?.opacity ?? 1;
+      const CAP_H = 34;
+      const basePos = settings.ui?.position;
+      const pos = dragPos.current ?? basePos ?? { x: window.innerWidth - 200, y: window.innerHeight - 160 };
 
       const onPointerDown = (e) => {
         if (e.button !== 0) return;
-        const rect = e.currentTarget.getBoundingClientRect();
-        const start = { x: e.clientX, y: e.clientY };
-        const origin = { x: rect.left, y: rect.top };
+        // Track the delta in CSS pixels and divide by the scale: getBoundingClientRect
+        // under a scaled element is unreliable, a start-position + delta model is exact.
+        const startPos = { ...pos };
+        const startClient = { x: e.clientX, y: e.clientY };
         let moved = false;
+        let raf = 0;
         const move = (ev) => {
-          const dx = ev.clientX - start.x;
-          const dy = ev.clientY - start.y;
+          const dx = ev.clientX - startClient.x;
+          const dy = ev.clientY - startClient.y;
           if (!moved && Math.abs(dx) + Math.abs(dy) > 6) moved = true;
-          if (moved) {
-            dragPos.current = {
-              x: Math.max(0, Math.min(origin.x + dx, window.innerWidth - 60)),
-              y: Math.max(0, Math.min(origin.y + dy, window.innerHeight - 34)),
-            };
-            force((n) => n + 1);
+          if (!moved) return;
+          dragPos.current = {
+            x: Math.max(0, Math.min(startPos.x + dx / scale, window.innerWidth - 60 * scale)),
+            y: Math.max(0, Math.min(startPos.y + dy / scale, window.innerHeight - CAP_H * scale)),
+          };
+          if (!raf) {
+            raf = requestAnimationFrame(() => {
+              raf = 0;
+              force((n) => n + 1);
+            });
           }
         };
         const up = () => {
           window.removeEventListener('pointermove', move);
           window.removeEventListener('pointerup', up);
+          if (raf) cancelAnimationFrame(raf);
           if (moved && dragPos.current) {
             const final = dragPos.current;
             dragPos.current = null;
@@ -1289,7 +1316,10 @@ window.__ModuleLoader__.load({
         h(Styles, null),
         h('div', {
           className: 'ftk-capsule' + (toast ? ' ftk-pulse' : ''),
-          style: { ...posStyle, opacity, zoom: scale },
+          style: {
+            left: pos.x, top: pos.y, opacity,
+            transform: `scale(${scale})`, transformOrigin: 'top left',
+          },
           onPointerDown,
           title: T('title'),
           role: 'button',
