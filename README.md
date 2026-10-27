@@ -62,7 +62,7 @@
 
 把本仓库克隆到本地任意目录，然后对任意 DSH 会话说：
 
-> 用 plugin_manager 的 install_bundle 安装 `(https://github.com/1694043523/dsh-file-tracker)` 这个 bundle。
+> 用 plugin_manager 的 install_bundle 安装 `(https://github.com/9840333w/dsh-file-tracker)` 这个 bundle。
 
 **方式 B：插件管理器**
 
