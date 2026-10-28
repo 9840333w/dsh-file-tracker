@@ -523,7 +523,13 @@ window.__ModuleLoader__.load({
       excluded: { glyph: '…', token: 'var(--dsw-alias-state-idle-primary)', key: 'kindExcluded' },
     };
 
-    function fmtTime(ts) {
+    function fmtDate(ts) {
+      const d = new Date(ts);
+      const p = (n) => String(n).padStart(2, '0');
+      return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+    }
+
+    function fmtClock(ts) {
       const d = new Date(ts);
       const p = (n) => String(n).padStart(2, '0');
       return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
@@ -646,7 +652,7 @@ window.__ModuleLoader__.load({
 .ftk-name{font-weight:600;word-break:break-all}
 .ftk-sess{display:inline-block;margin-right:6px;padding:0 6px;border-radius:4px;background:var(--dsw-alias-bg-layer-2,#ececef);color:var(--dsw-alias-label-secondary,#777);font-size:10px;line-height:16px;font-weight:500;vertical-align:1px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ftk-dir{color:var(--dsw-alias-label-secondary,#777);font-size:11px;word-break:break-all}
-.ftk-time{margin-left:auto;color:var(--dsw-alias-label-secondary,#888);font-size:11px;flex:none;padding-top:2px}
+.ftk-time{margin-left:auto;color:var(--dsw-alias-label-secondary,#888);font-size:10px;line-height:1.35;flex:none;padding-top:2px;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .ftk-size{color:var(--dsw-alias-label-secondary,#888);font-size:11px;flex:none;padding-top:2px;min-width:54px;text-align:right;font-variant-numeric:tabular-nums}
 .ftk-empty{padding:28px 16px;text-align:center;color:var(--dsw-alias-label-secondary,#888)}
 .ftk-more{padding:8px;text-align:center}
@@ -784,7 +790,9 @@ window.__ModuleLoader__.load({
               T('aggSummary', { count: rec.count ?? 0 })),
             h('div', { className: 'ftk-dir' }, parts.dir)),
           h('span', { className: 'ftk-size' }, fmtSize(rec)),
-          h('span', { className: 'ftk-time' }, fmtTime(rec.ts)),
+          h('div', { className: 'ftk-time' },
+            h('div', null, fmtDate(rec.ts)),
+            h('div', null, fmtClock(rec.ts))),
         );
       }
       return h('div', {
@@ -799,7 +807,9 @@ window.__ModuleLoader__.load({
           h('div', { className: 'ftk-dir' }, (rec.fromPath ? T('from') + ' ' + splitPath(rec.fromPath).dir + ' ' + T('to') + ' ' : '') + parts.dir),
         ),
         h('span', { className: 'ftk-size' }, fmtSize(rec)),
-        h('span', { className: 'ftk-time' }, fmtTime(rec.ts)),
+        h('div', { className: 'ftk-time' },
+          h('div', null, fmtDate(rec.ts)),
+          h('div', null, fmtClock(rec.ts))),
       );
     }
 
