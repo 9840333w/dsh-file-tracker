@@ -10,6 +10,18 @@
 
 ---
 
+## 预览
+
+<p align="center">
+  <img src="assets/screenshot-capsule.png" width="320" alt="迷你胶囊：有新变动时短暂展开提示">
+</p>
+
+**记录面板** —— 按工作区 / 会话实时查看，支持筛选、搜索、排序与右键操作：
+
+![记录面板](assets/screenshot-panel.png)
+
+---
+
 ## 功能特性
 
 ### 捕获引擎（四层互补，不依赖任何单一信号）
@@ -34,6 +46,12 @@
 - 右键菜单：**打开文件所在位置**（文件已被手动删除时给出提示并打开其文件夹；文件夹与文件都不存在时明确告知）、**复制文件路径**。
 - 设置页（三处入口：面板"设置"页、系统设置独立设置页 `settings.section`、插件页卡片）：总开关、排除目录聚合开关、排除列表、日志目录（切换时自动迁移合并旧日志）、保留天数、日志管理（按会话删除）、不透明度、尺寸、位置重置。
 - 中英文界面，跟随 DSH 语言设置。
+
+**设置页**：
+
+| 通用（记录开关 / 透明度 / 尺寸 / 排除规则） | 日志（目录 / 保留天数 / 按会话删除） |
+|---|---|
+| ![设置-通用](assets/screenshot-settings-ui.png) | ![设置-日志](assets/screenshot-settings-log.png) |
 
 ### 持久化
 
@@ -131,6 +149,8 @@ dsh-file-tracker/
 ├── index.js              宿主端：捕获引擎、持久化、HTTP API（webServer 路由）
 ├── client.js             浏览器端：胶囊/面板/设置 UI（React，无 JSX）
 ├── icon.svg              插件图标
+├── screenshots.json      插件市场详情页截图清单
+├── assets/               图标与截图（icon-180.png、screenshot-*.png）
 ├── locale/zh.json        插件管理器元数据（中文）
 ├── locale/en.json        插件管理器元数据（英文）
 └── README.md
